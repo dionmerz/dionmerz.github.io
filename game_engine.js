@@ -26,14 +26,16 @@ Timer.prototype.tick = function () {
     var gameDelta = Math.min(wallDelta, this.maxStep);
     this.gameTime += gameDelta;
     return gameDelta;
-}
+};
 
 function GameEngine() {
     this.entities = [];
     this.showOutlines = false;
     this.ctx = null;
     this.click = null;
+    this.clicked = false;
     this.mouse = null;
+    this.mousePos = {x:0, y:0};
     this.rightMove = null;
     this.leftMove = null;
     this.direction = "right";
@@ -41,9 +43,23 @@ function GameEngine() {
     this.wheel = null;
     this.surfaceWidth = null;
     this.surfaceHeight = null;
+    this.rightEdge = null;
+    this.leftEdge = null;
+    this.tickCount = 0;
+    this.anotherCount = 0;
+    this.changeScene = false;
+    this.lastScene = 0;
+    this.nextScene = 0;
+    this.scenes = null;
+    this.verticalDirection = "none";
+    this.scoreTimerStart = null;
 
-    this.scene = 1;
-    this.screenShake = false;
+    // new properties
+    this.score = null;
+    this.offset = null;
+    this.time = null;
+    this.heroIsDead = null;
+    this.deadTime = null;
 }
 
 GameEngine.prototype.init = function (ctx) {
@@ -53,7 +69,8 @@ GameEngine.prototype.init = function (ctx) {
     this.startInput();
     this.timer = new Timer();
     console.log('game initialized');
-}
+    this.ctx.canvas.style.cursor = "none";
+};
 
 GameEngine.prototype.start = function () {
     console.log("starting game");
@@ -62,11 +79,21 @@ GameEngine.prototype.start = function () {
         that.loop();
         requestAnimFrame(gameLoop, that.ctx.canvas);
     })();
-}
+};
+
 
 GameEngine.prototype.startInput = function () {
     console.log('Starting input');
     var that = this;
+
+    var getXandY = function (e) {
+        var x = e.clientX - that.ctx.canvas.getBoundingClientRect().left;
+        var y = e.clientY - that.ctx.canvas.getBoundingClientRect().top;
+
+        return { x: x, y: y };
+    };
+
+
 
     this.ctx.canvas.addEventListener("keydown", function (e) {
 
@@ -75,14 +102,25 @@ GameEngine.prototype.startInput = function () {
 
         }
 
-        if (e.key === 'd') {
+        if (e.code === 'KeyD') {
             that.moveRight = true;
             that.direction = "right";
          }
 
-         if (e.key === 'a') {
+         if (e.code === 'KeyA') {
            that.moveLeft = true;
            that.direction = "left";
+
+         }
+
+         if (e.code === 'KeyW') {
+           that.moveup = true;
+           that.verticalDirection = "up";
+         }
+
+         if (e.code === 'KeyS') {
+           that.movedown = true;
+           that.verticalDirection = "down";
          }
         e.preventDefault();
     }, false);
@@ -90,22 +128,80 @@ GameEngine.prototype.startInput = function () {
 
     this.ctx.canvas.addEventListener("keyup", function(e) {
 
-        if (e.key === 'd') {
+        if (e.code === 'KeyD') {
           that.moveRight = false;
+
         }
 
-        if (e.key === 'a') {
+        if (e.code === 'KeyA') {
           that.moveLeft = false;
         }
-    });
+
+        if (e.code === 'KeyW') {
+          that.moveup = false;
+          that.verticalDirection = "none";
+        }
+
+        if (e.code === 'KeyS') {
+          that.movedown = false;
+          that.verticalDirection = "none";
+
+        }
+
+        e.preventDefault();
+    }, false);
+
+//    this.ctx.canvas.addEventListener("click", function(e) {
+//        that.click = getXandY(e);
+//
+//
+//        if (that.clicked === true) {
+//            that.clicked = false;
+//        }
+//        else {
+//            that.clicked = true;
+//        }
+//
+//        e.preventDefault();
+//    }, false);
+
+    this.ctx.canvas.addEventListener("mousemove", function(e) {
+    that.mousePos = getXandY(e);
+
+
+    e.preventDefault();
+
+}, false);
+
+    this.ctx.canvas.addEventListener("mousedown", function(e) {
+        that.mousePos = getXandY(e);
+        that.click = getXandY(e);
+
+        that.clicked = true;
+    //e.preventDefault();
+
+}, false);
+
+
+    this.ctx.canvas.addEventListener("mouseup", function(e) {
+
+
+    that.mousePos = getXandY(e);
+
+       that.clicked = false;
+
+    //e.preventDefault();
+
+}, false);
+
 
     console.log('Input started');
-}
+};
 
 GameEngine.prototype.addEntity = function (entity) {
     console.log('added entity');
     this.entities.push(entity);
-}
+};
 
 GameEngine.prototype.draw = function () {
     this.ctx.clearRect(0, 0, this.ctx.canvas.width, this.ctx.canvas.height);
@@ -114,7 +210,7 @@ GameEngine.prototype.draw = function () {
         this.entities[i].draw(this.ctx);
     }
     this.ctx.restore();
-}
+};
 
 GameEngine.prototype.update = function () {
     var entitiesCount = this.entities.length;
@@ -123,6 +219,12 @@ GameEngine.prototype.update = function () {
         var entity = this.entities[i];
 
         if (!entity.removeFromWorld) {
+          if(entity.type === "hero" && entity.x >= 1200) {
+            this.rightEdge = true;
+
+          } else if (entity.type === "hero" && entity.x < 0) {
+            this.leftEdge = true;
+          }
             entity.update();
         }
     }
@@ -132,14 +234,41 @@ GameEngine.prototype.update = function () {
             this.entities.splice(i, 1);
         }
     }
-}
+};
 
 GameEngine.prototype.loop = function () {
+  // If hero is dead
+  if (!this.heroIsDead)
+    this.time = this.timer.gameTime - this.scoreTimer - this.deadTime;
+  // In the game
+  else
+    this.deadTime = this.timer.gameTime - this.time;
+
+    document.getElementById("minutes").innerHTML = Math.floor(this.time / 60);
+    document.getElementById("seconds").innerHTML = Math.floor(this.time) % 60;
+
+    // Keep running
+    this.score = 1000 - Math.floor(this.time) * 5 + this.offset;
+    document.getElementById("score").innerHTML = this.score;
+
     this.clockTick = this.timer.tick();
+    this.tickCount ++;
+    this.anotherCount++;
     this.update();
     this.draw();
     this.space = null;
-}
+    if(this.changeScene) {
+      this.changeScene = false;
+      if (this.scenes[this.nextScene].startTimer) {
+        this.scoreTimer = this.timer.gameTime;
+      }
+      this.scenes[this.nextScene].init();
+      this.scenes[this.lastScene].remove();
+
+    }
+    this.lastScene = this.nextScene;
+
+};
 
 /*
 Entity.prototype.rotateAndCache = function (image, angle) {
